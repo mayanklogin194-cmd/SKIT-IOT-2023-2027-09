@@ -1,48 +1,42 @@
 """
-FR-001, FR-002 (partial): Merges studentInfo + studentAssessment + assessments
-into one unified table, cleans missing values, standardizes dtypes.
+FR-001: merge the linked OULAD tables, clean missing values, standardize dtypes.
 
-Owner: Kripmatra Singh & Atharva Khandal (Sprint 2 — core data pipeline)
+Owner: Priyanshu Joshi (Sprint 2 - core data pipeline & preprocessing)
 """
 import pandas as pd
+from config import STUDENT_KEYS
+
+CAT_COLS = ["code_module", "code_presentation", "gender", "region", "highest_education",
+            "imd_band", "age_band", "disability", "assessment_type"]
 
 
-def merge_tables(tables: dict) -> pd.DataFrame:
-    assessment_scores = tables["studentAssessment"].merge(
-        tables["assessments"][["id_assessment", "weight", "assessment_type"]],
-        on="id_assessment",
-        how="left",
-    )
+def merge_tables(tables: dict) -> dict:
+    """Returns two merged views:
+      assessments - one row per (student, assessment) with demographics attached
+      students    - one row per (student, course presentation) with registration info
+    """
+    sa = tables["studentAssessment"].merge(tables["assessments"], on="id_assessment", how="left")
+    assessments = sa.merge(tables["studentInfo"], on=STUDENT_KEYS, how="inner")
 
-    merged = assessment_scores.merge(
-        tables["studentInfo"],
-        on="id_student",
-        how="left",
-    )
-    return merged
+    reg = tables["studentRegistration"][STUDENT_KEYS + ["date_registration", "date_unregistration"]]
+    students = tables["studentInfo"].merge(reg, on=STUDENT_KEYS, how="left")
+    return {"assessments": assessments, "students": students}
 
 
-def clean_data(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
+def clean_data(merged: dict) -> dict:
+    a = merged["assessments"].copy()
+    a = a.dropna(subset=["score"])                      # nothing to learn from a missing grade
+    # some final exams have no planned date -> use the day they were submitted
+    a["date"] = a["date"].fillna(a["date_submitted"])
+    a["weight"] = a["weight"].astype(float)
+    a["is_banked"] = a["is_banked"].astype(int)
 
-    # Standardize dtypes
-    numeric_cols = ["score", "weight", "date_submitted", "num_of_prev_attempts", "studied_credits"]
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    # Drop rows with no score (can't train/evaluate on those) or no student id
-    df = df.dropna(subset=["score", "id_student"])
-
-    # Median-impute remaining numeric gaps rather than dropping more rows
-    for col in numeric_cols:
-        if col in df.columns and df[col].isna().any():
-            df[col] = df[col].fillna(df[col].median())
-
-    # Standardize categorical text
-    for col in ["gender", "disability", "final_result", "assessment_type"]:
-        if col in df.columns:
-            df[col] = df[col].astype(str).str.strip()
-
-    df = df.drop_duplicates(subset=["id_student", "id_assessment"])
-    return df.reset_index(drop=True)
+    s = merged["students"].copy()
+    for df in (a, s):
+        df["imd_band"] = df["imd_band"].fillna("Unknown")
+        for c in CAT_COLS:
+            if c in df.columns:
+                df[c] = df[c].astype("category")
+        for c in ("id_student", "num_of_prev_attempts", "studied_credits"):
+            df[c] = pd.to_numeric(df[c], errors="coerce").astype("int32")
+    return {"assessments": a, "students": s}
