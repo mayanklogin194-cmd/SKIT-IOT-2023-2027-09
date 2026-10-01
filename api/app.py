@@ -1,65 +1,113 @@
 """
-FR-005/NFR-001: Flask REST API serving model predictions to the teacher
-and student dashboards. Target: respond within 2 seconds of a request (NFR-001).
+FR-005/NFR-001: Flask REST API serving model predictions to the teacher and student
+dashboards. Target: respond within 2 seconds of a request (NFR-001).
 
-Owner: Mayank Rathore & Priyanshu Joshi (Sprint 7)
+Run:   python api/app.py            (add USE_SYNTHETIC=1 to serve the synthetic demo models)
+Serves the built React dashboard (dashboard/dist) at "/" when it exists.
+
+Owner: Mayank Rathore & Priyanshu Joshi (Sprint 7 preview - API)
 """
+import json
+import os
 from pathlib import Path
+
 import joblib
 import pandas as pd
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
-app = Flask(__name__)
+ROOT = Path(__file__).resolve().parent.parent
+SUB = "synthetic" if os.environ.get("USE_SYNTHETIC") else ""
+MODEL_DIR, REPORT_DIR = ROOT / "models" / SUB, ROOT / "reports" / SUB
+DIST = ROOT / "dashboard" / "dist"
+
+app = Flask(__name__, static_folder=str(DIST), static_url_path="")
 CORS(app)
 
-MODEL_DIR = Path(__file__).resolve().parent.parent / "models"
-_rf_bundle = None
-_gbm_bundle = None
+_cache = {}
 
 
-def _load_models():
-    global _rf_bundle, _gbm_bundle
-    if _rf_bundle is None:
-        _rf_bundle = joblib.load(MODEL_DIR / "random_forest.joblib")
-    if _gbm_bundle is None:
-        _gbm_bundle = joblib.load(MODEL_DIR / "gbm_classifier.joblib")
-    return _rf_bundle, _gbm_bundle
+def _bundle(name):
+    if name not in _cache:
+        path = MODEL_DIR / f"{name}.joblib"
+        if not path.exists():
+            return None
+        _cache[name] = joblib.load(path)
+    return _cache[name]
 
 
-@app.route("/health", methods=["GET"])
+def _report(name):
+    return json.loads((REPORT_DIR / name).read_text())
+
+
+def _row(bundle, defaults, features):
+    row = dict(defaults)
+    row.update({k: v for k, v in (features or {}).items() if k in row})
+    return pd.DataFrame([row])[bundle["feature_columns"]]
+
+
+@app.get("/health")
 def health():
-    return jsonify({"status": "ok"})
+    return jsonify({"status": "ok", "models": {"random_forest": (MODEL_DIR / "random_forest.joblib").exists(),
+                                                "gbm_classifier": (MODEL_DIR / "gbm_classifier.joblib").exists()}})
 
 
-@app.route("/predict/grade", methods=["POST"])
+@app.post("/predict/grade")
 def predict_grade():
-    """Body: {"features": {"prior_score": 62, "total_vle_clicks": 340, ...}}"""
-    rf_bundle, _ = _load_models()
-    payload = request.get_json(force=True)
-    row = pd.DataFrame([payload["features"]]).reindex(columns=rf_bundle["feature_columns"], fill_value=0)
-    pred = rf_bundle["model"].predict(row)[0]
-    return jsonify({"predicted_score": round(float(pred), 2)})
+    """Body: {"features": {"prev_score": 62, "cum_clicks": 340, ...}}  (missing keys use typical values)"""
+    bundle = _bundle("random_forest")
+    if bundle is None:
+        return jsonify({"error": "random_forest model not trained - run python src/main.py"}), 503
+    feats = (request.get_json(force=True) or {}).get("features", {})
+    row = _row(bundle, _report("form_defaults_grade.json")["defaults"], feats)
+    pred = float(bundle["model"].predict(row)[0])
+    return jsonify({"predicted_score": round(min(max(pred, 0), 100), 2)})
 
 
-@app.route("/predict/outcome", methods=["POST"])
+@app.post("/predict/outcome")
 def predict_outcome():
-    """Body: {"features": {...}}"""
-    _, gbm_bundle = _load_models()
-    payload = request.get_json(force=True)
-    row = pd.DataFrame([payload["features"]]).reindex(columns=gbm_bundle["feature_columns"], fill_value=0)
-    pred_idx = gbm_bundle["model"].predict(row)[0]
-    label = gbm_bundle["label_encoder"].inverse_transform([pred_idx])[0]
-    proba = gbm_bundle["model"].predict_proba(row)[0].max()
-    return jsonify({"predicted_outcome": label, "confidence": round(float(proba), 3)})
+    """Body: {"features": {...}} -> predicted outcome, class probabilities and an early-warning risk level."""
+    bundle = _bundle("gbm_classifier")
+    if bundle is None:
+        return jsonify({"error": "gbm_classifier not trained - run python src/main.py"}), 503
+    feats = (request.get_json(force=True) or {}).get("features", {})
+    row = _row(bundle, _report("form_defaults_outcome.json")["defaults"], feats)
+    proba = bundle["model"].predict_proba(row)[0]
+    classes = list(bundle["label_encoder"].classes_)
+    probs = dict(zip(classes, map(float, proba)))
+    risk = probs.get("Fail", 0) + probs.get("Withdrawn", 0)
+    level = "High" if risk >= 0.6 else "Medium" if risk >= 0.4 else "Low"
+    best = max(probs, key=probs.get)
+    return jsonify({"predicted_outcome": best, "confidence": round(probs[best], 3),
+                    "probabilities": probs, "risk": risk, "risk_level": level})
 
 
-@app.route("/dashboard/alerts", methods=["GET"])
+@app.get("/dashboard/summary")
+def summary():
+    return jsonify({"baselines": _report("baseline_metrics.json"), "rf": _report("rf_metrics.json"),
+                    "gbm": _report("gbm_metrics.json"),
+                    "forms": {"grade": _report("form_defaults_grade.json"),
+                              "outcome": _report("form_defaults_outcome.json")}})
+
+
+@app.get("/dashboard/students")
+def students():
+    return jsonify(_report("sample_students.json"))
+
+
+@app.get("/dashboard/alerts")
 def early_warning_alerts():
-    """Placeholder: teacher dashboard early-warning list.
-    Replace with a real query once predictions are stored per-student."""
-    return jsonify({"alerts": [], "note": "wire this up to a predictions table"})
+    """Held-out students whose predicted chance of failing or withdrawing is >= 40%."""
+    alerts = [s for s in _report("sample_students.json") if s["risk"] >= 0.4]
+    return jsonify({"alerts": alerts})
+
+
+@app.get("/")
+def index():
+    if (DIST / "index.html").exists():
+        return send_from_directory(DIST, "index.html")
+    return jsonify({"message": "API is running. Build the dashboard: cd dashboard && npm install && npm run build"})
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=False, port=5000)
