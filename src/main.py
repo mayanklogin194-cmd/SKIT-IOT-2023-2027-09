@@ -24,6 +24,7 @@ from models.baselines import train_baselines                                 # n
 from models.random_forest_model import train_random_forest                   # noqa: E402
 from models.gbm_model import train_gbm                                       # noqa: E402
 from evaluation import plot_rmse_comparison, plot_feature_importance         # noqa: E402
+from benchmarking import build_benchmark_summary, plot_benchmark                  # noqa: E402
 
 
 def run_pipeline(use_synthetic: bool, tune: bool):
@@ -59,8 +60,10 @@ def run_pipeline(use_synthetic: bool, tune: bool):
                             reports_dir / "feature_importance_rf.png")
     plot_feature_importance(gbm_rep["feature_importance"], "GBM - outcome prediction",
                             reports_dir / "feature_importance_gbm.png")
-    # TODO Sprint 6: benchmark against the published papers (Atthibyani 2024, Jha et al. 2019)
-    # TODO Sprint 8: unit tests + end-to-end integration tests
+    # Sprint 6: create an internal benchmark from the current held-out metrics.
+    # Published-paper comparison remains separate until the exact cited papers are verified.
+    benchmark = build_benchmark_summary(reports_dir)
+    plot_benchmark(benchmark, reports_dir / "benchmark_comparison.png")
 
     print("\nPipeline complete.")
     print(f"  Random Forest RMSE : {rf_rep['rmse']:.3f}")
