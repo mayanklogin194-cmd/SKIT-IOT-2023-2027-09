@@ -1,54 +1,86 @@
 """
-FR-003/FR-004 evaluation + NFR benchmarking: RMSE, Accuracy, F1, cross-validation,
-and comparison charts (published benchmarks vs our models).
+FR-003/FR-004 evaluation helpers: RMSE, Accuracy, F1, grouped cross-validation,
+leak-free splitting, feature-importance roll-up and comparison charts.
 
-
+Owner: Kripendra Singh (Sprint 4-5 metrics) & Atharva Khandal (Sprint 6 benchmarking, to extend)
 """
+import json
 from pathlib import Path
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from sklearn.model_selection import cross_val_score
+from sklearn.metrics import (mean_squared_error, mean_absolute_error, r2_score,
+                             accuracy_score, f1_score, confusion_matrix)
+from sklearn.model_selection import GroupKFold, GroupShuffleSplit, cross_val_score
+from config import RANDOM_STATE
 
 
-def cross_validate_regressor(model, X, y, cv=5):
-    scores = cross_val_score(model, X, y, cv=cv, scoring="neg_root_mean_squared_error")
-    rmse_scores = -scores
-    print(f"CV RMSE: mean={rmse_scores.mean():.3f}, std={rmse_scores.std():.3f}")
-    return rmse_scores
+def rmse(y, p) -> float:
+    return float(np.sqrt(mean_squared_error(y, p)))
 
 
-def cross_validate_classifier(model, X, y, cv=5):
-    scores = cross_val_score(model, X, y, cv=cv, scoring="f1_macro")
-    print(f"CV macro-F1: mean={scores.mean():.3f}, std={scores.std():.3f}")
+def regression_report(y, p) -> dict:
+    return {"rmse": rmse(y, p), "mae": float(mean_absolute_error(y, p)), "r2": float(r2_score(y, p))}
+
+
+def classification_report_dict(y, p, labels) -> dict:
+    return {"accuracy": float(accuracy_score(y, p)),
+            "f1_macro": float(f1_score(y, p, average="macro")),
+            "f1_weighted": float(f1_score(y, p, average="weighted")),
+            "labels": list(labels),
+            "confusion_matrix": confusion_matrix(y, p).tolist()}
+
+
+def group_split(df, groups, test_size=0.2):
+    """Train/test split where one student never appears on both sides (no leakage)."""
+    gss = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=RANDOM_STATE)
+    tr, te = next(gss.split(df, groups=groups))
+    return df.iloc[tr], df.iloc[te]
+
+
+def grouped_cv(model, X, y, groups, scoring, folds=3):
+    scores = cross_val_score(model, X, y, groups=groups, scoring=scoring, cv=GroupKFold(folds))
+    print(f"CV {scoring}: mean={scores.mean():.3f}, std={scores.std():.3f}")
     return scores
 
 
-def plot_rmse_comparison(our_rmse: float, published_benchmarks: dict, out_path="reports/rmse_comparison.png"):
-    """published_benchmarks e.g. {'Atthibyani (2024)': 8.9, 'Jha et al. (2019)': 9.4}"""
-    labels = list(published_benchmarks.keys()) + ["Our Random Forest"]
-    values = list(published_benchmarks.values()) + [our_rmse]
+def rolled_importance(pipe, categorical, top=15) -> list:
+    """Sum one-hot columns back to their source feature so charts stay readable."""
+    names = pipe.named_steps["prep"].get_feature_names_out()
+    imp = pipe.named_steps["model"].feature_importances_
+    agg = {}
+    for n, v in zip(names, imp):
+        n = n.split("__", 1)[1]
+        base = next((c for c in categorical if n.startswith(c + "_")), n)
+        agg[base] = agg.get(base, 0.0) + float(v)
+    total = sum(agg.values()) or 1.0
+    items = sorted(((k, v / total) for k, v in agg.items()), key=lambda x: -x[1])[:top]
+    return [{"feature": k, "importance": round(v, 4)} for k, v in items]
 
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+
+def save_json(reports_dir, name, obj) -> None:
+    (Path(reports_dir) / name).write_text(json.dumps(obj, indent=2))
+
+
+def plot_rmse_comparison(rmse_by_model: dict, out_path):
+    """Bar chart of our models' RMSE. (Sprint 6: add the cited published benchmarks here.)"""
+    labels, values = list(rmse_by_model), list(rmse_by_model.values())
     fig, ax = plt.subplots(figsize=(7, 4))
-    bars = ax.bar(labels, values, color=["#9aa5b1"] * len(published_benchmarks) + ["#2f6feb"])
+    bars = ax.bar(labels, values, color=["#9aa5b1"] * (len(values) - 1) + ["#2f6feb"])
     ax.set_ylabel("RMSE (lower is better)")
-    ax.set_title("Assessment grade prediction — RMSE vs published benchmarks")
+    ax.set_title("Assessment grade prediction - RMSE by model")
     ax.bar_label(bars, fmt="%.2f")
-    plt.xticks(rotation=15, ha="right")
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
-    plt.close()
-    print(f"Saved comparison chart to {out_path}")
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
 
 
-def plot_feature_importance(model, feature_names, top_n=15, out_path="reports/feature_importance.png"):
-    importances = model.feature_importances_
-    order = importances.argsort()[::-1][:top_n]
-
-    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+def plot_feature_importance(items: list, title: str, out_path, top_n=12):
+    items = items[:top_n][::-1]
     fig, ax = plt.subplots(figsize=(7, 5))
-    ax.barh([feature_names[i] for i in order][::-1], importances[order][::-1], color="#2f6feb")
-    ax.set_title("Feature importance")
+    ax.barh([i["feature"] for i in items], [i["importance"] for i in items], color="#2f6feb")
+    ax.set_title(title)
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150)
-    plt.close()
-    print(f"Saved feature importance chart to {out_path}")
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
