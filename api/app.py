@@ -5,7 +5,7 @@ dashboards. Target: respond within 2 seconds of a request (NFR-001).
 Run:   python api/app.py            (add USE_SYNTHETIC=1 to serve the synthetic demo models)
 Serves the built React dashboard (dashboard/dist) at "/" when it exists.
 
-Owner: Mayank Rathore & Priyanshu Joshi (Sprint 7 preview - API)
+Owner: Mayank Rathore & Priyanshu Joshi 
 """
 import json
 import os
