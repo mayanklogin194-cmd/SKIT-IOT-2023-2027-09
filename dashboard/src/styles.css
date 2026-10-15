@@ -60,3 +60,7 @@ th{color:var(--muted);font-weight:500}
 button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--dist);outline-offset:2px}
 @media(max-width:860px){.kpis,.team{grid-template-columns:1fr 1fr}.two{grid-template-columns:1fr}}
 @media(max-width:480px){.kpis,.team{grid-template-columns:1fr}}
+
+/* Prediction request feedback */
+.status{font-size:13px;color:var(--muted);margin:10px 0}
+.prediction-error{font-size:13px;color:var(--risk);border:1px solid var(--risk);border-radius:6px;padding:9px 10px;margin:10px 0}
