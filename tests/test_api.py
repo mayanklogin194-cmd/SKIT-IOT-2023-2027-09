@@ -44,7 +44,16 @@ def test_grade_prediction_rejects_unknown_feature(monkeypatch):
     assert "Unknown feature" in response.get_json()["error"]
 
 
+def test_grade_prediction_returns_score(monkeypatch):
+    install_grade_fakes(monkeypatch)
 
+    response = api_module.app.test_client().post(
+        "/predict/grade",
+        json={"features": {"prev_score": 75}},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["predicted_score"] == 67.4
 
 
 def test_outcome_prediction_returns_probabilities_and_risk(monkeypatch):
