@@ -128,17 +128,30 @@ function Controls({ spec, cats, choices, state, setState }) {
 
 function useDebouncedPost(path, features, onResult) {
   const t = useRef();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   useEffect(() => {
     clearTimeout(t.current);
-    t.current = setTimeout(() => post(path, { features }).then(onResult).catch(() => onResult(null)), 120);
+    setLoading(true);
+    setError("");
+    t.current = setTimeout(() => {
+      post(path, { features })
+        .then((data) => { onResult(data); setError(""); })
+        .catch((err) => {
+          onResult(null);
+          setError(err?.message || "Prediction failed. Check that the API is running.");
+        })
+        .finally(() => setLoading(false));
+    }, 180);
     return () => clearTimeout(t.current);
-  }, [JSON.stringify(features)]); // eslint-disable-line
+  }, [path, JSON.stringify(features)]); // eslint-disable-line
+  return { loading, error };
 }
 
 function OutcomePredictor({ form }) {
   const [state, setState] = useState(form.defaults);
   const [res, setRes] = useState(null);
-  useDebouncedPost("/predict/outcome", state, setRes);
+  const prediction = useDebouncedPost("/predict/outcome", state, setRes);
   const spec = [["total_clicks", "VLE clicks so far", 0, 3000, 10], ["active_days", "Active days on the VLE", 0, 100, 1],
                 ["avg_score", "Average assessment score", 0, 100, 1], ["n_submitted", "Assessments submitted", 0, 8, 1],
                 ["clicks_last_30d", "Clicks in the last 30 days", 0, 1500, 10]];
@@ -152,13 +165,15 @@ function OutcomePredictor({ form }) {
       </div>
       <div className="card">
         <h2>Predicted final outcome</h2>
-        {res ? (
+        {prediction.loading && <p className="status" role="status">Updating prediction…</p>}
+        {prediction.error && <p className="prediction-error" role="alert">{prediction.error}</p>}
+        {res && !prediction.error ? (
           <>
             <Bars items={Object.entries(res.probabilities).map(([c, p]) => [c, p, COLORS[c], (p * 100).toFixed(0) + "%"])} />
             <div className={"verdict " + res.risk_level}>{res.risk_level} risk · {(res.risk * 100).toFixed(0)}% chance of failing or withdrawing</div>
             <p className="note">Most likely: {res.predicted_outcome} ({(res.confidence * 100).toFixed(0)}%). Training used balanced class weights so rare outcomes are not ignored.</p>
           </>
-        ) : <p className="note">Waiting for the API…</p>}
+        ) : !prediction.error && !prediction.loading ? <p className="note">No prediction available. Change an input to try again.</p> : null}
       </div>
     </section>
   );
@@ -167,7 +182,7 @@ function OutcomePredictor({ form }) {
 function GradePredictor({ form }) {
   const [state, setState] = useState(form.defaults);
   const [res, setRes] = useState(null);
-  useDebouncedPost("/predict/grade", state, setRes);
+  const prediction = useDebouncedPost("/predict/grade", state, setRes);
   const spec = [["prev_score", "Score on previous assessment", 0, 100, 1], ["prev_avg_score", "Average of earlier scores", 0, 100, 1],
                 ["n_prev_assessments", "Assessments already done", 0, 8, 1], ["cum_clicks", "VLE clicks so far", 0, 4000, 10],
                 ["cum_active_days", "Active days so far", 0, 150, 1], ["weight", "Weight of this assessment (%)", 0, 100, 5]];
@@ -181,8 +196,10 @@ function GradePredictor({ form }) {
       </div>
       <div className="card">
         <h2>Predicted grade</h2>
-        {res ? (<><div className="big">{res.predicted_score.toFixed(0)}<small style={{ fontSize: 20, color: "var(--muted)" }}> / 100</small></div>
-          <p className="note">Typical error on unseen students is about ±10 marks (MAE).</p></>) : <p className="note">Waiting for the API…</p>}
+        {prediction.loading && <p className="status" role="status">Updating prediction…</p>}
+        {prediction.error && <p className="prediction-error" role="alert">{prediction.error}</p>}
+        {res && !prediction.error ? (<><div className="big">{res.predicted_score.toFixed(0)}<small style={{ fontSize: 20, color: "var(--muted)" }}> / 100</small></div>
+          <p className="note">Typical error on unseen students is about ±10 marks (MAE).</p></>) : !prediction.error && !prediction.loading ? <p className="note">No prediction available. Change an input to try again.</p> : null}
       </div>
     </section>
   );
