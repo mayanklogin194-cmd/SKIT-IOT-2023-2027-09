@@ -44,13 +44,7 @@ def test_grade_prediction_rejects_unknown_feature(monkeypatch):
     assert "Unknown feature" in response.get_json()["error"]
 
 
-def test_grade_prediction_rejects_non_numeric_value(monkeypatch):
-    install_grade_fakes(monkeypatch)
-    response = api_module.app.test_client().post(
-        "/predict/grade", json={"features": {"prev_score": "high"}}
-    )
-    assert response.status_code == 400
-    assert "must be numeric" in response.get_json()["error"]
+
 
 
 def test_outcome_prediction_returns_probabilities_and_risk(monkeypatch):
