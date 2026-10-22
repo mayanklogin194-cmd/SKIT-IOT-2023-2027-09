@@ -9,12 +9,14 @@ Owner: Mayank Rathore & Priyanshu Joshi (Sprint 7 preview - API)
 """
 import json
 import os
+import logging
 import time
+import uuid
 from pathlib import Path
 
 import joblib
 import pandas as pd
-from flask import Flask, g, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -24,38 +26,36 @@ DIST = ROOT / "dashboard" / "dist"
 
 app = Flask(__name__, static_folder=str(DIST), static_url_path="")
 CORS(app)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("student_prediction_api")
 
 
 @app.before_request
-def _start_request_timer():
-    """Start a timer without logging student feature values."""
-    g.request_started_at = time.perf_counter()
+def start_request_metrics():
+    request.request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request.started_at = time.perf_counter()
 
 
 @app.after_request
-def _log_request_duration(response):
-    """Log request metadata and expose server processing time."""
-    started = getattr(g, "request_started_at", None)
-    elapsed_ms = (time.perf_counter() - started) * 1000 if started else 0.0
-    app.logger.info(
-        "request method=%s path=%s status=%s duration_ms=%.2f",
-        request.method, request.path, response.status_code, elapsed_ms,
-    )
+def finish_request_metrics(response):
+    elapsed_ms = (time.perf_counter() - getattr(request, "started_at", time.perf_counter())) * 1000
+    response.headers["X-Request-ID"] = getattr(request, "request_id", "unknown")
     response.headers["X-Response-Time-ms"] = f"{elapsed_ms:.2f}"
+    logger.info("request_id=%s method=%s path=%s status=%s duration_ms=%.2f",
+                getattr(request, "request_id", "unknown"), request.method,
+                request.path, response.status_code, elapsed_ms)
     return response
 
 
 @app.errorhandler(404)
-def _not_found(_error):
-    """Return a consistent JSON response for unknown routes."""
-    return jsonify({"error": "Endpoint not found."}), 404
+def not_found(_error):
+    return jsonify({"error": "Endpoint not found.", "request_id": getattr(request, "request_id", "unknown")}), 404
 
 
 @app.errorhandler(405)
-def _method_not_allowed(_error):
-    """Return JSON when a known route receives the wrong HTTP method."""
-    return jsonify({"error": "Method not allowed for this endpoint."}), 405
-
+def method_not_allowed(_error):
+    return jsonify({"error": "HTTP method not allowed for this endpoint.",
+                    "request_id": getattr(request, "request_id", "unknown")}), 405
 
 _cache = {}
 
