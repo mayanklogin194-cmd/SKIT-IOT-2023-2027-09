@@ -58,14 +58,18 @@ def build_benchmark_summary(reports_dir="reports"):
             "f1_macro": metrics["f1_macro"],
             "f1_weighted": metrics["f1_weighted"],
         })
-    classification.sort(key=lambda x: x["accuracy"], reverse=True)
+    # Macro-F1 gives each outcome class equal weight, which matters when
+    # Pass/Fail/Withdrawn classes are imbalanced. Accuracy is the tie-breaker.
+    classification.sort(key=lambda x: (x["f1_macro"], x["accuracy"]), reverse=True)
 
     summary = {
         "scope": "Internal benchmark on held-out students from the current OULAD run",
         "regression": regression,
         "classification": classification,
         "best_regression_by_rmse": regression[0]["model"],
-        "best_classification_by_accuracy": classification[0]["model"],
+        "best_classification_by_macro_f1": classification[0]["model"],
+        "best_classification_by_accuracy": max(classification, key=lambda x: x["accuracy"])["model"],
+        "classification_selection_metric": "macro-F1 (accuracy used only to break ties)",
         "literature_comparison": {
             "status": "pending_verification",
             "note": "Do not add published benchmark numbers until the exact papers cited in the project form are verified."
