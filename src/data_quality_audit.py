@@ -73,43 +73,6 @@ def audit_table(name: str, frame: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def build_report(tables: dict[str, pd.DataFrame]) -> dict[str, Any]:
-    """Build the report and a concise project-wide summary."""
-    table_reports = {
-        name: audit_table(name, frame) for name, frame in tables.items()
-    }
-    total_rows = sum(item["rows"] for item in table_reports.values())
-    total_duplicates = sum(item["duplicate_rows"] for item in table_reports.values())
-    total_missing = sum(item["missing_cells"] for item in table_reports.values())
-    schema_issues = {
-        name: details["missing_expected_columns"]
-        for name, details in table_reports.items()
-        if details["missing_expected_columns"]
-    }
-
-    return {
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "data_directory": str(DATA_DIR),
-        "summary": {
-            "tables_audited": len(table_reports),
-            "total_rows_across_tables": total_rows,
-            "total_duplicate_rows_across_tables": total_duplicates,
-            "total_missing_cells": total_missing,
-            "tables_with_missing_values": sum(
-                bool(item["columns_with_missing_values"])
-                for item in table_reports.values()
-            ),
-            "schema_issues_found": bool(schema_issues),
-            "schema_issues": schema_issues,
-        },
-        "tables": table_reports,
-        "interpretation": [
-            "Missing values are reported, not automatically filled.",
-            "Duplicate rows are counted, not automatically deleted.",
-            "Review table-specific meaning before cleaning any records.",
-        ],
-    }
-
 
 def main() -> int:
     """Load the configured dataset, audit it, and write a JSON report."""
