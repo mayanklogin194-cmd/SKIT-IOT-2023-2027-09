@@ -1,11 +1,4 @@
-"""Create readable model insights from the project's saved evaluation reports.
 
-Run from the repository root:
-    python src/model_insights.py
-
-This reports global feature importance and model metrics. It does not explain an
-individual prediction or imply that feature importance is causal.
-"""
 import json
 from pathlib import Path
 
