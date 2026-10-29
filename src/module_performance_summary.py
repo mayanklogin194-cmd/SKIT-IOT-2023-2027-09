@@ -1,0 +1,79 @@
+
+from collections import Counter, defaultdict
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+INPUT_FILE = ROOT / "reports" / "sample_students.json"
+OUTPUT_FILE = ROOT / "reports" / "module_performance_summary.json"
+
+
+def load_students(path: Path = INPUT_FILE) -> list[dict]:
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} was not found. Run the existing training pipeline first "
+            "so reports/sample_students.json is generated."
+        )
+    with path.open("r", encoding="utf-8") as file:
+        rows = json.load(file)
+    if not isinstance(rows, list):
+        raise ValueError("sample_students.json must contain a JSON list.")
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _mean(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 3) if values else None
+
+
+def summarize_by_module(students: list[dict]) -> dict:
+    groups = defaultdict(list)
+    for student in students:
+        module = str(student.get("code_module", "Unknown"))
+        groups[module].append(student)
+
+    summary = {}
+    for module, rows in sorted(groups.items()):
+        outcomes = Counter(
+            str(row.get("final_result", "Unknown")) for row in rows
+        )
+        clicks = [float(r["total_clicks"]) for r in rows
+                  if isinstance(r.get("total_clicks"), (int, float))]
+        active_days = [float(r["active_days"]) for r in rows
+                       if isinstance(r.get("active_days"), (int, float))]
+        scores = [float(r["avg_score"]) for r in rows
+                  if isinstance(r.get("avg_score"), (int, float))]
+        risks = [float(r["risk"]) for r in rows
+                 if isinstance(r.get("risk"), (int, float))]
+        summary[module] = {
+            "student_count": len(rows),
+            "average_total_clicks": _mean(clicks),
+            "average_active_days": _mean(active_days),
+            "average_assessment_score": _mean(scores),
+            "average_predicted_risk": _mean(risks),
+            "outcome_counts": dict(sorted(outcomes.items())),
+        }
+
+    return {
+        "source": "reports/sample_students.json",
+        "description": (
+            "Summary of the sample students produced by the existing model; "
+            "this is not a summary of every student in the full OULAD dataset."
+        ),
+        "total_sample_students": len(students),
+        "module_count": len(summary),
+        "modules": summary,
+    }
+
+
+def main() -> None:
+    students = load_students()
+    report = summarize_by_module(students)
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with OUTPUT_FILE.open("w", encoding="utf-8") as file:
+        json.dump(report, file, indent=2)
+    print(f"Processed {report['total_sample_students']} sample students.")
+    print(f"Module summaries written to: {OUTPUT_FILE}")
+
+
+if __name__ == "__main__":
+    main()
