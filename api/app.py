@@ -12,6 +12,7 @@ import os
 import logging
 import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
@@ -23,6 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SUB = "synthetic" if os.environ.get("USE_SYNTHETIC") else ""
 MODEL_DIR, REPORT_DIR = ROOT / "models" / SUB, ROOT / "reports" / SUB
 DIST = ROOT / "dashboard" / "dist"
+FEEDBACK_PATH = REPORT_DIR / "prediction_feedback.jsonl"
 
 app = Flask(__name__, static_folder=str(DIST), static_url_path="")
 CORS(app)
@@ -147,6 +149,61 @@ def predict_outcome():
     best = max(probs, key=probs.get)
     return jsonify({"predicted_outcome": best, "confidence": round(probs[best], 3),
                     "probabilities": probs, "risk": risk, "risk_level": level})
+
+
+
+
+@app.post("/feedback")
+def save_prediction_feedback():
+    """Store lightweight feedback about a prediction without storing input features."""
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+
+    prediction_type = payload.get("prediction_type")
+    feedback = payload.get("feedback")
+    prediction = payload.get("prediction")
+    comment = payload.get("comment", "")
+
+    if prediction_type not in {"grade", "outcome"}:
+        return jsonify({"error": "'prediction_type' must be 'grade' or 'outcome'."}), 400
+    if feedback not in {"useful", "not_useful"}:
+        return jsonify({"error": "'feedback' must be 'useful' or 'not_useful'."}), 400
+    if prediction is None:
+        return jsonify({"error": "'prediction' is required."}), 400
+    if not isinstance(comment, str) or len(comment) > 500:
+        return jsonify({"error": "'comment' must be a string of at most 500 characters."}), 400
+
+    if prediction_type == "grade":
+        if isinstance(prediction, bool) or not isinstance(prediction, (int, float)):
+            return jsonify({"error": "Grade prediction must be numeric."}), 400
+        if not 0 <= prediction <= 100:
+            return jsonify({"error": "Grade prediction must be between 0 and 100."}), 400
+        stored_prediction = round(float(prediction), 2)
+    else:
+        if not isinstance(prediction, str) or prediction not in {
+            "Distinction", "Pass", "Fail", "Withdrawn"
+        }:
+            return jsonify({"error": "Outcome prediction is not a recognized class."}), 400
+        stored_prediction = prediction
+
+    record = {
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "request_id": getattr(request, "request_id", "unknown"),
+        "prediction_type": prediction_type,
+        "prediction": stored_prediction,
+        "feedback": feedback,
+        "comment": comment.strip(),
+    }
+    try:
+        FEEDBACK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with FEEDBACK_PATH.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        logger.exception("Could not persist prediction feedback")
+        return jsonify({"error": "Feedback could not be saved right now."}), 500
+
+    return jsonify({"saved": True, "message": "Feedback received."}), 201
 
 
 @app.get("/dashboard/summary")
